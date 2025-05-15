@@ -1,0 +1,20 @@
+{
+  "name": "debt-purchasing-contracts",
+  "version": "1.0.0",
+  "description": "Smart contracts for the debt purchasing platform",
+  "main": "index.js",
+  "scripts": {
+    "test": "forge test",
+    "build": "forge build",
+    "deploy:sepolia": "forge script script/Deploy.s.sol:DeployScript --rpc-url $SEPOLIA_RPC_URL --broadcast --verify"
+  },
+  "keywords": [
+    "ethereum",
+    "solidity",
+    "debt",
+    "aave",
+    "defi"
+  ],
+  "author": "",
+  "license": "MIT"
+}
