@@ -8,6 +8,7 @@ import "@aave/core-v3/contracts/interfaces/IPriceOracleGetter.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import "./interfaces/IAaveDebt.sol";
 import "./interfaces/IAaveRouter.sol";
@@ -16,6 +17,21 @@ contract AaveRouter is IAaveRouter {
     using SafeERC20 for IERC20;
 
     uint256 public constant ONE_HUNDRED_PERCENT = 10_000;
+
+    bytes32 public constant FULL_SELL_ORDER_TYPE_HASH =
+        keccak256(
+            "FullSellOrder(uint256 chainId,address contract,OrderTitle title,address fullSaleToken,uint256 fullSaleExtra)"
+        );
+
+    bytes32 public constant PARTIAL_SELL_ORDER_TYPE_HASH =
+        keccak256(
+            "PartialSellOrder(uint256 chainId,address contract,OrderTitle title,uint256 interestRateMode,uint256 mintHF,address[] collateralOut,uint256[] percents,address repayToken,uint256 repayAmount,uint256 bonus)"
+        );
+
+    bytes32 public constant ORDER_TITLE_TYPE_HASH =
+        keccak256(
+            "OrderTitle(address debt,uint256 debtNonce,uint256 startTime,uint256 endTime,uint256 triggerHF)"
+        );
 
     address public immutable aaveDebtImplementation;
     mapping(address => uint256) public userNonces;
@@ -190,27 +206,18 @@ contract AaveRouter is IAaveRouter {
         IAaveDebt(debt).swapBorrowRateMode(asset, interestRateMode);
     }
 
-    function executeFullSale(
-        SellOrder calldata order,
+    function executeFullSaleOrder(
+        FullSellOrder calldata order,
         uint256 minProfit // based on base currency
     ) external {
-        require(
-            block.timestamp >= order.startTime &&
-                block.timestamp <= order.endTime,
-            "Order expired"
-        );
-        require(order.isFullSale, "Not fullSale");
+        _verifyTitle(order.title);
 
-        address debt = order.debt;
+        address debt = order.title.debt;
         address seller = debtOwners[debt];
         require(seller != address(0), "Invalid debt");
-        require(order.debtNonce == debtNonces[debt], "Invalid debt nonce");
 
         // verify signature
-        require(
-            _verifySellOrder(order, seller, order.v, order.r, order.s),
-            "Invalid signature"
-        );
+        require(_verifyFullSellOrder(order, seller), "Invalid signature");
 
         (
             uint256 totalCollateralBase,
@@ -222,7 +229,7 @@ contract AaveRouter is IAaveRouter {
         ) = aavePool.getUserAccountData(debt);
 
         // check HF
-        require(hf <= order.triggerHF, "HF too high");
+        require(hf <= order.title.triggerHF, "HF too high");
 
         // calculate basePayValue based on fullSaleExtra
         uint256 basePayValue = (totalDebtBase * order.fullSaleExtra) /
@@ -235,11 +242,10 @@ contract AaveRouter is IAaveRouter {
         );
 
         // convert totalDebtBase (in USD 1e8) to fullSaleToken amount
-        uint256 fullSalePayValue = _getTokenValueFromUsd(
+        uint256 fullSalePayValue = _getTokenValueFromBaseValue(
             basePayValue,
             order.fullSaleToken,
-            aaveOracle.getAssetPrice(order.fullSaleToken),
-            8
+            aaveOracle.getAssetPrice(order.fullSaleToken)
         );
 
         // transfer fullSalePayValue from buyer to seller
@@ -254,33 +260,173 @@ contract AaveRouter is IAaveRouter {
         // transfer ownership of debt to buyer
         debtOwners[debt] = msg.sender;
 
-        // emit FullSaleExecuted(msg.sender, seller, debt, fullSalePrice);
+        emit ExecuteFullSaleOrder(debt, order.title.debtNonce, msg.sender);
     }
 
-    function _getTokenValueFromUsd(
-        uint256 usdValue, // 18 decimals
+    function excutePartialSellOrder(PartialSellOrder calldata order) external {
+        _verifyTitle(order.title);
+
+        address debt = order.title.debt;
+        address seller = debtOwners[debt];
+        require(seller != address(0), "Invalid debt");
+
+        // verify signature
+        require(_verifyPartialSellOrder(order, seller), "Invalid signature");
+
+        (, , , , , uint256 hf) = aavePool.getUserAccountData(debt);
+
+        // check HF
+        require(hf <= order.title.triggerHF, "HF too high");
+
+        // transfer repayAmount from buyer to contract
+        IERC20(order.repayToken).safeTransferFrom(
+            msg.sender,
+            address(this),
+            order.repayAmount
+        );
+        IERC20(order.repayToken).approve(address(aavePool), order.repayAmount);
+
+        // repay debt with the correct rate mode
+        aavePool.repay(
+            order.repayToken,
+            order.repayAmount,
+            order.interestRateMode,
+            debt
+        );
+
+        // calculate collateral amounts to withdraw
+        uint256 repayAmountInBase = _getBaseValueFromTokenValue(
+            order.repayToken,
+            order.repayAmount,
+            aaveOracle.getAssetPrice(order.repayToken)
+        );
+
+        uint256 totalPercent;
+        // withdraw collaterals
+        for (uint256 i = 0; i < order.collateralOut.length; i++) {
+            totalPercent += order.percents[i];
+            uint256 withdrawAmount = (repayAmountInBase * order.percents[i]) /
+                ONE_HUNDRED_PERCENT;
+            uint256 withdrawAmountInToken = _getTokenValueFromBaseValue(
+                withdrawAmount,
+                order.collateralOut[i],
+                aaveOracle.getAssetPrice(order.collateralOut[i])
+            );
+
+            withdrawAmountInToken +=
+                (withdrawAmountInToken * order.bonus) /
+                ONE_HUNDRED_PERCENT;
+
+            // withdraw collateral
+            IAaveDebt(debt).withdraw(
+                order.collateralOut[i],
+                withdrawAmountInToken,
+                msg.sender
+            );
+        }
+
+        require(totalPercent == ONE_HUNDRED_PERCENT, "One hundred percent");
+
+        // check final HF
+        (, , , , , hf) = aavePool.getUserAccountData(debt);
+        require(hf >= order.minHF, "Final HF too low");
+
+        emit ExecutePartialSellOrder(debt, order.title.debtNonce, msg.sender);
+    }
+
+    function _getTokenValueFromBaseValue(
+        uint256 baseValue, // 18 decimals
         address token,
-        uint256 price, // 8 decimals,
-        uint8 priceDecimals
+        uint256 tokenPrice // 8 decimals,
     ) public view returns (uint256) {
         uint8 tokenDecimals = IERC20Metadata(token).decimals();
-        uint256 valueIn18 = (usdValue * (10 ** priceDecimals)) / price;
+        uint8 priceDecimals = 8;
 
-        if (tokenDecimals < 18) {
-            return valueIn18 / (10 ** (18 - tokenDecimals));
-        } else {
-            return valueIn18 * (10 ** (tokenDecimals - 18));
-        }
+        return
+            (baseValue * 10 ** (tokenDecimals)) /
+            (tokenPrice * 10 ** (18 - priceDecimals));
     }
 
-    function _verifySellOrder(
-        SellOrder calldata order,
-        address signer,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
-    ) internal returns (bool) {}
+    function _getBaseValueFromTokenValue(
+        address token,
+        uint256 tokenValue,
+        uint256 tokenPrice
+    ) public view returns (uint256) {
+        uint8 tokenDecimals = IERC20Metadata(token).decimals();
+        uint8 priceDecimals = 8;
 
+        return
+            (tokenValue * tokenPrice * 10 ** 18) /
+            (10 ** (priceDecimals + tokenDecimals));
+    }
+
+    function _verifyTitle(OrderTitle calldata title) internal view {
+        require(
+            block.timestamp >= title.startTime &&
+                block.timestamp <= title.endTime,
+            "Order expired"
+        );
+        require(
+            title.debtNonce == debtNonces[title.debt],
+            "Invalid debt nonce"
+        );
+    }
+
+    function _verifyFullSellOrder(
+        FullSellOrder calldata order,
+        address signer
+    ) internal view returns (bool) {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                FULL_SELL_ORDER_TYPE_HASH,
+                block.chainid,
+                address(this),
+                _titleHash(order.title),
+                order.fullSaleToken,
+                order.fullSaleExtra
+            )
+        );
+
+        return signer == ECDSA.recover(structHash, order.v, order.r, order.s);
+    }
+
+    function _verifyPartialSellOrder(
+        PartialSellOrder calldata order,
+        address signer
+    ) internal view returns (bool) {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                PARTIAL_SELL_ORDER_TYPE_HASH,
+                block.chainid,
+                address(this),
+                _titleHash(order.title),
+                order.interestRateMode,
+                order.minHF,
+                order.collateralOut,
+                order.percents,
+                order.repayToken,
+                order.repayAmount,
+                order.bonus
+            )
+        );
+        return signer == ECDSA.recover(structHash, order.v, order.r, order.s);
+    }
+
+    function _titleHash(
+        OrderTitle calldata title
+    ) internal pure returns (bytes32) {
+        return
+            keccak256(
+                abi.encode(
+                    ORDER_TITLE_TYPE_HASH,
+                    title.debt,
+                    title.debtNonce,
+                    title.startTime,
+                    title.endTime,
+                    title.triggerHF
+                )
+            );
+    }
     function _getRevertMsg(
         bytes memory revertData
     ) internal pure returns (string memory) {

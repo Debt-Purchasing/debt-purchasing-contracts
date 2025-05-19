@@ -2,17 +2,27 @@
 pragma solidity 0.8.20;
 
 interface IAaveRouter {
-    struct SellOrder {
+    struct OrderTitle {
         address debt;
         uint256 debtNonce;
         uint256 startTime;
         uint256 endTime;
         uint256 triggerHF;
-        // fullSale
-        bool isFullSale;
+    }
+
+    struct FullSellOrder {
+        OrderTitle title;
         address fullSaleToken;
         uint256 fullSaleExtra;
-        // partialSale fields
+        uint8 v;
+        bytes32 r;
+        bytes32 s;
+    }
+
+    struct PartialSellOrder {
+        OrderTitle title;
+        uint256 interestRateMode;
+        uint256 minHF;
         address[] collateralOut;
         uint256[] percents;
         address repayToken;
@@ -22,4 +32,16 @@ interface IAaveRouter {
         bytes32 r;
         bytes32 s;
     }
+
+    event ExecuteFullSaleOrder(
+        address indexed debt,
+        uint256 debtNonce,
+        address buyer
+    );
+
+    event ExecutePartialSellOrder(
+        address indexed debt,
+        uint256 debtNonce,
+        address buyer
+    );
 }
