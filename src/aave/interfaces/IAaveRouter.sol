@@ -33,6 +33,29 @@ interface IAaveRouter {
         bytes32 s;
     }
 
+    event CreateDebt(address indexed debt, address indexed owner);
+    event TransferDebtOwnership(address indexed debt, address indexed newOwner);
+    event CancelCurrentDebtOrders(address indexed debt);
+    event Supply(address indexed debt, address indexed asset, uint256 amount);
+    event Borrow(
+        address indexed debt,
+        address indexed asset,
+        uint256 amount,
+        uint256 interestRateMode
+    );
+    event Withdraw(
+        address indexed debt,
+        address indexed asset,
+        uint256 amount,
+        address to
+    );
+    event Repay(
+        address indexed debt,
+        address indexed asset,
+        uint256 amount,
+        uint256 interestRateMode
+    );
+
     event ExecuteFullSaleOrder(
         address indexed debt,
         uint256 debtNonce,

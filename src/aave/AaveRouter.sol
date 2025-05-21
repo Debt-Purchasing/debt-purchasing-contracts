@@ -5,8 +5,8 @@ import "@openzeppelin/contracts/proxy/Clones.sol";
 import "@aave/core-v3/contracts/interfaces/IPool.sol";
 import "@aave/core-v3/contracts/interfaces/IPoolAddressesProvider.sol";
 import "@aave/core-v3/contracts/interfaces/IPriceOracleGetter.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import "@aave/core-v3/contracts/dependencies/openzeppelin/contracts/SafeERC20.sol";
+import "@aave/core-v3/contracts/dependencies/openzeppelin/contracts/IERC20Detailed.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
@@ -82,8 +82,23 @@ contract AaveRouter is IAaveRouter {
         address clone = Clones.cloneDeterministic(aaveDebtImplementation, salt);
         IAaveDebt(clone).initialize(aavePool);
         debtOwners[clone] = msg.sender;
-        userNonces[msg.sender]++;
+        userNonces[msg.sender] += 1;
+        emit CreateDebt(clone, msg.sender);
         return clone;
+    }
+
+    function transferDebtOwnership(address debt, address newOwner) external {
+        require(msg.sender == debtOwners[debt], "Not owner");
+        debtOwners[debt] = newOwner;
+        debtNonces[debt] += 1;
+
+        emit TransferDebtOwnership(debt, newOwner);
+    }
+
+    function cancelDebtCurrentOrders(address debt) external {
+        require(msg.sender == debtOwners[debt], "Not owner");
+        debtNonces[debt] += 1;
+        emit CancelCurrentDebtOrders(debt);
     }
 
     function callSupply(address debt, address asset, uint256 amount) external {
@@ -91,6 +106,8 @@ contract AaveRouter is IAaveRouter {
         IERC20(asset).approve(address(aavePool), amount);
 
         aavePool.supply(asset, amount, debt, 0);
+
+        emit Supply(debt, asset, amount);
     }
 
     function callSupplyWithPermit(
@@ -116,17 +133,19 @@ contract AaveRouter is IAaveRouter {
         IERC20(asset).approve(address(aavePool), amount);
 
         aavePool.supply(asset, amount, debt, 0);
+        emit Supply(debt, asset, amount);
     }
 
     function callBorrow(
         address debt,
         address asset,
         uint256 amount,
-        uint256 interestRateMode,
-        address onBehalfOf
+        uint256 interestRateMode
     ) external {
         require(debtOwners[debt] == msg.sender, "Not owner");
-        IAaveDebt(debt).borrow(asset, amount, interestRateMode, onBehalfOf);
+        IAaveDebt(debt).borrow(asset, amount, interestRateMode);
+
+        emit Borrow(debt, asset, amount, interestRateMode);
     }
 
     function callWithdraw(
@@ -137,11 +156,7 @@ contract AaveRouter is IAaveRouter {
     ) external {
         require(debtOwners[debt] == msg.sender, "Not owner");
         IAaveDebt(debt).withdraw(asset, amount, to);
-    }
-
-    function transferDebtOwnership(address debt, address newOwner) external {
-        require(msg.sender == debtOwners[debt], "Not owner");
-        debtOwners[debt] = newOwner;
+        emit Withdraw(debt, asset, amount, to);
     }
 
     function callRepay(
@@ -153,6 +168,7 @@ contract AaveRouter is IAaveRouter {
         IERC20(asset).safeTransferFrom(msg.sender, address(this), amount);
         IERC20(asset).approve(address(aavePool), amount);
         aavePool.repay(asset, amount, interestRateMode, debt);
+        emit Repay(debt, asset, amount, interestRateMode);
     }
 
     function callRepayWithPermit(
@@ -177,6 +193,8 @@ contract AaveRouter is IAaveRouter {
         IERC20(asset).safeTransferFrom(msg.sender, address(this), amount);
         IERC20(asset).approve(address(aavePool), amount);
         aavePool.repay(asset, amount, interestRateMode, debt);
+
+        emit Repay(debt, asset, amount, interestRateMode);
     }
 
     function callRepayWithATokens(
@@ -195,6 +213,8 @@ contract AaveRouter is IAaveRouter {
             interestRateMode,
             msg.sender
         );
+
+        emit Repay(debt, asset, amount, interestRateMode);
     }
 
     function callSwapBorrowRateMode(
@@ -339,7 +359,7 @@ contract AaveRouter is IAaveRouter {
         address token,
         uint256 tokenPrice // 8 decimals,
     ) public view returns (uint256) {
-        uint8 tokenDecimals = IERC20Metadata(token).decimals();
+        uint8 tokenDecimals = IERC20Detailed(token).decimals();
         uint8 priceDecimals = 8;
 
         return
@@ -352,7 +372,7 @@ contract AaveRouter is IAaveRouter {
         uint256 tokenValue,
         uint256 tokenPrice
     ) public view returns (uint256) {
-        uint8 tokenDecimals = IERC20Metadata(token).decimals();
+        uint8 tokenDecimals = IERC20Detailed(token).decimals();
         uint8 priceDecimals = 8;
 
         return

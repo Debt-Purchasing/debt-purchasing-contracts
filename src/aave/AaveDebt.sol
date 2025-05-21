@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.20;
 
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@aave/core-v3/contracts/dependencies/openzeppelin/contracts/SafeERC20.sol";
 import {IPool} from "@aave/core-v3/contracts/interfaces/IPool.sol";
 
 // /**
-//  * @title DebtOwner
+//  * @title AaveDebt
 //  * @notice A contract that acts as a wallet for managing debt positions on Aave
 //  */
-contract DebtOwner {
+contract AaveDebt {
     using SafeERC20 for IERC20;
 
     address public router;
@@ -29,10 +29,9 @@ contract DebtOwner {
     function borrow(
         address asset,
         uint256 amount,
-        uint256 interestRateMode,
-        address onBehalfOf
+        uint256 interestRateMode
     ) external onlyRouter {
-        aavePool.borrow(asset, amount, interestRateMode, 0, onBehalfOf);
+        aavePool.borrow(asset, amount, interestRateMode, 0, address(this));
     }
 
     function withdraw(

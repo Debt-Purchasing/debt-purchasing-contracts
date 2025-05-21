@@ -9,7 +9,8 @@ import "@aave/core-v3/contracts/interfaces/IPriceOracleGetter.sol";
 import "@aave/core-v3/contracts/interfaces/IAToken.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@aave/core-v3/contracts/mocks/oracle/PriceOracle.sol";
-
+import "@aave/core-v3/contracts/protocol/libraries/types/DataTypes.sol";
+import "./helpers/IERC20Metadata.sol";
 contract SetUpAave is Test {
     // Aave V3 Mainnet addresses
     address public constant AAVE_V3_POOL =
@@ -63,7 +64,7 @@ contract SetUpAave is Test {
     // Mock Price Oracle
     PriceOracle public priceOracle;
 
-    function setUp() public {
+    function setUp() public virtual {
         uint256 forkId = vm.createFork(vm.rpcUrl("mainnet"), 19000000);
         vm.selectFork(forkId);
 
@@ -111,9 +112,17 @@ contract SetUpAave is Test {
         _mintTokensToUser(carol);
         _mintTokensToUser(daniel);
         _mintTokensToUser(elio);
+
+        // Set prices for all tokens first
+        setAssetPrice(WETH, 2000 * 1e8); // $2000 per ETH
+        setAssetPrice(WBTC, 40000 * 1e8); // $40000 per BTC
+        setAssetPrice(USDC, 1 * 1e8); // $1 per USDC
+        setAssetPrice(USDT, 1 * 1e8); // $1 per USDT
+        setAssetPrice(DAI, 1 * 1e8); // $1 per DAI
+        setAssetPrice(AAVE, 100 * 1e8); // $100 per AAVE
     }
 
-    function testSetupAaveSuccess() public {
+    function testSetupAaveSuccess() public view {
         // Verify pool is initialized
         assertEq(address(pool), AAVE_V3_POOL);
         assertEq(address(addressesProvider), AAVE_V3_POOL_ADDRESSES_PROVIDER);
@@ -129,14 +138,6 @@ contract SetUpAave is Test {
     }
 
     function testAliceDepositAndBorrow() public {
-        // Set prices for all tokens first
-        setAssetPrice(WETH, 2000 * 1e8); // $2000 per ETH
-        setAssetPrice(WBTC, 40000 * 1e8); // $40000 per BTC
-        setAssetPrice(USDC, 1 * 1e8); // $1 per USDC
-        setAssetPrice(USDT, 1 * 1e8); // $1 per USDT
-        setAssetPrice(DAI, 1 * 1e8); // $1 per DAI
-        setAssetPrice(AAVE, 100 * 1e8); // $100 per AAVE
-
         // Initial balances
         uint256 initialWETHBalance = weth.balanceOf(alice);
         uint256 initialWBTCBalance = wbtc.balanceOf(alice);
@@ -181,24 +182,21 @@ contract SetUpAave is Test {
         pool.supply(WETH, initialWETHBalance, alice, 0);
         pool.supply(WBTC, initialWBTCBalance, alice, 0);
 
-        // Get health factor
-        (, , , , , uint256 healthFactor) = pool.getUserAccountData(alice);
+        // Get health factor and available borrows
+        (, , uint256 availableBorrowsBase, , , uint256 healthFactor) = pool
+            .getUserAccountData(alice);
         console.log("\nHealth Factor after deposit:", healthFactor);
+        console.log(
+            "\nAvailable borrow (in USD with 8 decimals): ",
+            availableBorrowsBase
+        );
 
-        // Calculate max borrow amounts (80% of collateral value)
-        uint256 maxBorrowValue = (totalCollateralValue * 80) / 100;
-        uint256 maxUSDCBorrow = (maxBorrowValue * 1e6) / usdcPrice;
-        uint256 maxUSDTBorrow = (maxBorrowValue * 1e6) / usdtPrice;
+        // Calculate borrow amounts (half of available borrows for each)
+        uint256 borrowValue = availableBorrowsBase / 2; // Half of available borrows in USD
+        uint256 borrowUSDC = (borrowValue * 1e6) / usdcPrice; // Convert to USDC decimals
+        uint256 borrowUSDT = (borrowValue * 1e6) / usdtPrice; // Convert to USDT decimals
 
-        console.log("\nMaximum Borrow Amounts:");
-        console.log("USDC:", maxUSDCBorrow);
-        console.log("USDT:", maxUSDTBorrow);
-
-        // Borrow 20% of max for each (reduced from 50% to avoid collateral error)
-        uint256 borrowUSDC = maxUSDCBorrow / 3;
-        uint256 borrowUSDT = maxUSDTBorrow / 3;
-
-        console.log("\nActual Borrow Amounts:");
+        console.log("\nBorrow Amounts:");
         console.log("USDC:", borrowUSDC);
         console.log("USDT:", borrowUSDT);
 
@@ -206,29 +204,32 @@ contract SetUpAave is Test {
         pool.borrow(USDC, borrowUSDC, 2, 0, alice); // 2 = variable rate
         pool.borrow(USDT, borrowUSDT, 2, 0, alice);
 
-        // Final balances
-        uint256 finalWETHBalance = weth.balanceOf(alice);
-        uint256 finalWBTCBalance = wbtc.balanceOf(alice);
-        uint256 finalUSDCBalance = usdc.balanceOf(alice);
-        uint256 finalUSDTBalance = usdt.balanceOf(alice);
+        // Get initial debt positions
+        uint256 initialUSDCDebt = vDebtUSDC.balanceOf(alice);
+        uint256 initialUSDTDebt = vDebtUSDT.balanceOf(alice);
 
-        console.log("\nFinal Balances:");
-        console.log("WETH:", finalWETHBalance);
-        console.log("WBTC:", finalWBTCBalance);
-        console.log("USDC:", finalUSDCBalance);
-        console.log("USDT:", finalUSDTBalance);
+        console.log("\nInitial Debt Positions:");
+        console.log("USDC Debt:", initialUSDCDebt);
+        console.log("USDT Debt:", initialUSDTDebt);
 
-        // Get final health factor
-        (, , , , , healthFactor) = pool.getUserAccountData(alice);
-        console.log("\nFinal Health Factor:", healthFactor);
+        // Advance time by 1 year to see interest accumulation
+        vm.warp(block.timestamp + 365 days);
 
-        // Get debt positions
-        uint256 usdcDebt = vDebtUSDC.balanceOf(alice);
-        uint256 usdtDebt = vDebtUSDT.balanceOf(alice);
+        // Get debt positions after 1 year
+        uint256 usdcDebtAfter1Year = vDebtUSDC.balanceOf(alice);
+        uint256 usdtDebtAfter1Year = vDebtUSDT.balanceOf(alice);
 
-        console.log("\nDebt Positions:");
-        console.log("USDC Debt:", usdcDebt);
-        console.log("USDT Debt:", usdtDebt);
+        console.log("\nDebt Positions After 1 Year:");
+        console.log("USDC Debt:", usdcDebtAfter1Year);
+        console.log("USDT Debt:", usdtDebtAfter1Year);
+
+        // Calculate interest earned
+        uint256 usdcInterest = usdcDebtAfter1Year - initialUSDCDebt;
+        uint256 usdtInterest = usdtDebtAfter1Year - initialUSDTDebt;
+
+        console.log("\nInterest Accumulated in 1 Year:");
+        console.log("USDC Interest:", usdcInterest);
+        console.log("USDT Interest:", usdtInterest);
 
         vm.stopPrank();
     }
@@ -270,5 +271,65 @@ contract SetUpAave is Test {
         console.log("WBTC Price:", priceOracle.getAssetPrice(WBTC));
         console.log("USDC Price:", priceOracle.getAssetPrice(USDC));
         console.log("USDT Price:", priceOracle.getAssetPrice(USDT));
+    }
+
+    /**
+     * @notice Helper function to check if stable rate borrowing is enabled for an asset
+     * @param asset The address of the asset to check
+     * @return bool True if stable rate borrowing is enabled, false otherwise
+     */
+    function isStableRateBorrowingEnabled(
+        address asset
+    ) internal view returns (bool) {
+        DataTypes.ReserveConfigurationMap memory config = pool.getConfiguration(
+            asset
+        );
+        // Bit 59 represents stable rate borrowing enabled
+        return (config.data & (1 << 59)) != 0;
+    }
+
+    /**
+     * @notice Helper function to get and display reserve configuration details
+     * @param asset The address of the asset to check
+     */
+    function displayReserveConfiguration(address asset) internal view {
+        DataTypes.ReserveConfigurationMap memory config = pool.getConfiguration(
+            asset
+        );
+
+        console.log(
+            "\nReserve Configuration for",
+            IERC20Metadata(asset).symbol()
+        );
+        console.log("LTV:", config.data & 0xFFFF);
+        console.log("Liquidation Threshold:", (config.data >> 16) & 0xFFFF);
+        console.log("Liquidation Bonus:", (config.data >> 32) & 0xFFFF);
+        console.log("Decimals:", (config.data >> 48) & 0xFF);
+        console.log("Is Active:", (config.data & (1 << 56)) != 0);
+        console.log("Is Frozen:", (config.data & (1 << 57)) != 0);
+        console.log("Borrowing Enabled:", (config.data & (1 << 58)) != 0);
+        console.log(
+            "Stable Rate Borrowing Enabled:",
+            (config.data & (1 << 59)) != 0
+        );
+        console.log("Is Paused:", (config.data & (1 << 60)) != 0);
+        console.log(
+            "Borrowing in Isolation Enabled:",
+            (config.data & (1 << 61)) != 0
+        );
+        console.log(
+            "Siloed Borrowing Enabled:",
+            (config.data & (1 << 62)) != 0
+        );
+        console.log("Flash Loan Enabled:", (config.data & (1 << 63)) != 0);
+        console.log("Reserve Factor:", (config.data >> 64) & 0xFFFF);
+        console.log("Borrow Cap:", (config.data >> 80) & 0xFFFFFFFFFFFFFFFF);
+        console.log("Supply Cap:", (config.data >> 116) & 0xFFFFFFFFFFFFFFFF);
+    }
+
+    function testDisplayReserveConfigurations() public view {
+        displayReserveConfiguration(USDC);
+
+        displayReserveConfiguration(USDT);
     }
 }
