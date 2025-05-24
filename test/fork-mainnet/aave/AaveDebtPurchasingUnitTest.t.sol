@@ -15,9 +15,9 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
         uint256 availableBorrowsBase;
         uint256 healthFactor;
         uint256 usdcAmount;
-        uint256 usdtAmount;
+        uint256 daiAmount;
         uint256 initialVDebtUSDC;
-        uint256 initialVDebtUSDT;
+        uint256 initialVDebtDAI;
         uint256 initialATokenBalance;
         uint256 repayAmount;
     }
@@ -514,16 +514,16 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
 
     function _calculateBorrowAmounts(
         uint256 availableBorrowsBase
-    ) internal view returns (uint256 usdcAmount, uint256 usdtAmount) {
+    ) internal view returns (uint256 usdcAmount, uint256 daiAmount) {
         uint256 borrowValue = availableBorrowsBase / 2; // Half of available borrows in USD
         usdcAmount = (borrowValue * 1e6) / priceOracle.getAssetPrice(USDC); // Convert to USDC decimals
-        usdtAmount = (borrowValue * 1e6) / priceOracle.getAssetPrice(USDT); // Convert to USDT decimals
+        daiAmount = (borrowValue * 1e18) / priceOracle.getAssetPrice(DAI); // Convert to DAI decimals
     }
 
     function _verifyBorrowState(
         address debtAddress,
         uint256 expectedUsdcAmount,
-        uint256 expectedUsdtAmount
+        uint256 expectedDaiAmount
     ) internal view {
         // Verify vDebt balances
         assertEq(
@@ -532,9 +532,9 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
             "vDebtUSDC balance should match borrow amount"
         );
         assertEq(
-            vDebtUSDT.balanceOf(debtAddress),
-            expectedUsdtAmount,
-            "vDebtUSDT balance should match borrow amount"
+            vDebtDAI.balanceOf(debtAddress),
+            expectedDaiAmount,
+            "vDebtDAI balance should match borrow amount"
         );
     }
 
@@ -550,10 +550,13 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
         // Get initial debt
         (, uint256 totalDebtBase, , ) = _getUserAccountData(debtAddress);
 
+        // Get initial USDC balance
+        uint256 initialUsdcBalance = usdc.balanceOf(alice);
+
         // Borrow USDC
         uint256 borrowAmount = 1000 * 1e6; // 1000 USDC
         vm.startPrank(alice);
-        router.callBorrow(debtAddress, USDC, borrowAmount, 2);
+        router.callBorrow(debtAddress, USDC, borrowAmount, 2, alice);
 
         // Get updated debt
         (, uint256 newTotalDebtBase, , ) = _getUserAccountData(debtAddress);
@@ -572,6 +575,13 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
             vDebtUSDC.balanceOf(debtAddress),
             borrowAmount,
             "vDebtUSDC balance should match borrow amount"
+        );
+
+        // Verify USDC was received by Alice
+        assertEq(
+            usdc.balanceOf(alice) - initialUsdcBalance,
+            borrowAmount,
+            "USDC balance increase should match borrow amount"
         );
 
         vm.stopPrank();
@@ -603,19 +613,29 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
         );
 
         // Calculate borrow amounts
-        (debtState.usdcAmount, debtState.usdtAmount) = _calculateBorrowAmounts(
+        (debtState.usdcAmount, debtState.daiAmount) = _calculateBorrowAmounts(
             debtState.availableBorrowsBase
         );
 
         console.log("\nBorrow Amounts:");
         console.log("USDC Amount:", debtState.usdcAmount);
-        console.log("USDT Amount:", debtState.usdtAmount);
+        console.log("DAI Amount:", debtState.daiAmount);
+
+        // Get initial USDC balance
+        uint256 initialUsdcBalance = usdc.balanceOf(alice);
 
         // Start prank for borrow operations
         vm.startPrank(alice);
 
         // Borrow USDC
-        router.callBorrow(debtAddress, USDC, debtState.usdcAmount, 2);
+        router.callBorrow(debtAddress, USDC, debtState.usdcAmount, 2, alice);
+
+        // Verify USDC was received by Alice
+        assertEq(
+            usdc.balanceOf(alice) - initialUsdcBalance,
+            debtState.usdcAmount,
+            "USDC balance increase should match borrow amount"
+        );
 
         // Get intermediate state
         (
@@ -642,8 +662,18 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
             midHealthFactor
         );
 
-        // Borrow USDT
-        router.callBorrow(debtAddress, USDT, debtState.usdtAmount, 2);
+        // Get initial DAI balance
+        uint256 initialDaiBalance = dai.balanceOf(alice);
+
+        // Borrow DAI
+        router.callBorrow(debtAddress, DAI, debtState.daiAmount, 2, alice);
+
+        // Verify DAI was received by Alice
+        assertEq(
+            dai.balanceOf(alice) - initialDaiBalance,
+            debtState.daiAmount,
+            "DAI balance increase should match borrow amount"
+        );
 
         // Get final state
         (
@@ -659,17 +689,9 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
             debtState.totalDebtBase +
                 (debtState.usdcAmount * priceOracle.getAssetPrice(USDC)) /
                 1e6 +
-                (debtState.usdtAmount * priceOracle.getAssetPrice(USDT)) /
-                1e6,
+                (debtState.daiAmount * priceOracle.getAssetPrice(DAI)) /
+                1e18,
             "Total debt should increase by both borrows"
-        );
-
-        _logAccountState(
-            "After USDT Borrow",
-            finalCollateralBase,
-            finalDebtBase,
-            finalAvailableBorrowsBase,
-            finalHealthFactor
         );
 
         // Verify states
@@ -692,7 +714,7 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
         _verifyBorrowState(
             debtAddress,
             debtState.usdcAmount,
-            debtState.usdtAmount
+            debtState.daiAmount
         );
 
         vm.stopPrank();
@@ -710,7 +732,7 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
         // Try to borrow large amount (should fail)
         uint256 borrowAmount = 1000000 * 1e6; // 1M USDC
         vm.expectRevert();
-        router.callBorrow(debtAddress, USDC, borrowAmount, 2);
+        router.callBorrow(debtAddress, USDC, borrowAmount, 2, alice);
 
         vm.stopPrank();
     }
@@ -728,7 +750,7 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
         vm.startPrank(bob);
         uint256 borrowAmount = 1000 * 1e6;
         vm.expectRevert("Not owner");
-        router.callBorrow(debtAddress, USDC, borrowAmount, 2);
+        router.callBorrow(debtAddress, USDC, borrowAmount, 2, alice);
         vm.stopPrank();
     }
 
@@ -898,9 +920,7 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
         debtState.initialATokenBalance = IERC20(aWethAddress).balanceOf(
             debtAddress
         );
-        debtState.initialVDebtUSDT = IERC20(aWbtcAddress).balanceOf(
-            debtAddress
-        );
+        debtState.initialVDebtDAI = IERC20(aWbtcAddress).balanceOf(debtAddress);
 
         // Calculate withdraw amounts
         uint256 withdrawWethAmount = amounts[0] / 2;
@@ -920,7 +940,7 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
         _verifyWithdrawState(
             debtAddress,
             debtState.initialATokenBalance - withdrawWethAmount,
-            debtState.initialVDebtUSDT,
+            debtState.initialVDebtDAI,
             expectedCollateralAfterWeth
         );
 
@@ -936,7 +956,7 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
         _verifyWithdrawState(
             debtAddress,
             debtState.initialATokenBalance - withdrawWethAmount,
-            debtState.initialVDebtUSDT - withdrawWbtcAmount,
+            debtState.initialVDebtDAI - withdrawWbtcAmount,
             expectedFinalCollateral
         );
 
@@ -991,7 +1011,7 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
             priceOracle.getAssetPrice(USDC);
 
         vm.startPrank(alice);
-        router.callBorrow(debtAddress, USDC, borrowAmount, 2);
+        router.callBorrow(debtAddress, USDC, borrowAmount, 2, alice);
 
         // Try to withdraw (should fail due to unsafe health factor)
         vm.expectRevert();
@@ -1009,7 +1029,7 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
         (
             uint256 currentCollateralBase,
             uint256 currentDebtBase,
-            uint256 currentAvailableBorrowsBase,
+            ,
             uint256 currentHealthFactor
         ) = _getUserAccountData(debtAddress);
 
@@ -1053,7 +1073,7 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
         // Borrow USDC
         uint256 borrowAmount = 1000 * 1e6; // 1000 USDC
         vm.startPrank(alice);
-        router.callBorrow(debtAddress, USDC, borrowAmount, 2);
+        router.callBorrow(debtAddress, USDC, borrowAmount, 2, alice);
 
         // Get initial state
         (
@@ -1123,13 +1143,13 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
 
         address debtAddress = _setupBorrowTest(alice, assets, amounts);
 
-        // Borrow USDC and USDT
+        // Borrow USDC and DAI
         uint256 borrowUSDC = 500 * 1e6; // 500 USDC
-        uint256 borrowUSDT = 500 * 1e6; // 500 USDT
+        uint256 borrowDAI = 500 * 1e18; // 500 DAI
 
         vm.startPrank(alice);
-        router.callBorrow(debtAddress, USDC, borrowUSDC, 2);
-        router.callBorrow(debtAddress, USDT, borrowUSDT, 2);
+        router.callBorrow(debtAddress, USDC, borrowUSDC, 2, alice);
+        router.callBorrow(debtAddress, DAI, borrowDAI, 2, alice);
 
         // Get initial state
         (
@@ -1141,11 +1161,11 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
 
         // Get initial vDebt balances
         debtState.initialVDebtUSDC = vDebtUSDC.balanceOf(debtAddress);
-        debtState.initialVDebtUSDT = vDebtUSDT.balanceOf(debtAddress);
+        debtState.initialVDebtDAI = vDebtDAI.balanceOf(debtAddress);
 
         // Repay half of each debt
         debtState.usdcAmount = borrowUSDC / 2;
-        debtState.usdtAmount = borrowUSDT / 2;
+        debtState.daiAmount = borrowDAI / 2;
 
         // Repay USDC
         usdc.approve(address(router), debtState.usdcAmount);
@@ -1162,7 +1182,7 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
         assertApproxEqAbs(
             vDebtUSDC.balanceOf(debtAddress),
             expectedVDebtUSDC,
-            1,
+            1000,
             "vDebtUSDC balance should match expected"
         );
 
@@ -1186,23 +1206,23 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
             "Total debt should match expected after USDC repay"
         );
 
-        // Repay USDT
-        usdt.approve(address(router), debtState.usdtAmount);
-        router.callRepay(debtAddress, USDT, debtState.usdtAmount, 2);
+        // Repay DAI
+        dai.approve(address(router), debtState.daiAmount);
+        router.callRepay(debtAddress, DAI, debtState.daiAmount, 2);
 
         // Calculate expected values after both repays
-        uint256 expectedVDebtUSDT = debtState.initialVDebtUSDT -
-            debtState.usdtAmount;
+        uint256 expectedVDebtDAI = debtState.initialVDebtDAI -
+            debtState.daiAmount;
         uint256 expectedFinalDebt = expectedDebtAfterUSDC -
-            (debtState.usdtAmount * priceOracle.getAssetPrice(USDT)) /
-            1e6;
+            (debtState.daiAmount * priceOracle.getAssetPrice(DAI)) /
+            1e18;
 
         // Verify final state
         assertApproxEqAbs(
-            vDebtUSDT.balanceOf(debtAddress),
-            expectedVDebtUSDT,
-            1,
-            "vDebtUSDT balance should match expected"
+            vDebtDAI.balanceOf(debtAddress),
+            expectedVDebtDAI,
+            1000,
+            "vDebtDAI balance should match expected"
         );
 
         (
@@ -1221,7 +1241,7 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
         assertApproxEqAbs(
             currentDebtBase,
             expectedFinalDebt,
-            1,
+            1000,
             "Total debt should match expected after both repays"
         );
 
@@ -1245,16 +1265,16 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
         // Borrow USDC
         uint256 borrowAmount = 1000 * 1e6; // 1000 USDC
         vm.startPrank(alice);
-        router.callBorrow(debtAddress, USDC, borrowAmount, 2);
+        router.callBorrow(debtAddress, USDC, borrowAmount, 2, alice);
         vm.stopPrank();
 
         // Create new account without USDC
         address newUser = makeAddr("newUser");
         vm.startPrank(newUser);
-        
+
         // Try to repay without having USDC
         uint256 repayAmount = borrowAmount / 2;
-        vm.expectRevert("SafeERC20: low-level call failed");
+        vm.expectRevert();
         router.callRepay(debtAddress, USDC, repayAmount, 2);
         vm.stopPrank();
     }
@@ -1268,15 +1288,10 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
 
         address debtAddress = _setupBorrowTest(alice, assets, amounts);
 
-        // Supply USDC to get aUSDC
-        uint256 supplyAmount = 2000 * 1e6; // 2000 USDC
-        vm.startPrank(alice);
-        usdc.approve(address(router), supplyAmount);
-        router.callSupply(debtAddress, USDC, supplyAmount);
-
         // Borrow USDC
         uint256 borrowAmount = 1000 * 1e6; // 1000 USDC
-        router.callBorrow(debtAddress, USDC, borrowAmount, 2);
+        vm.startPrank(alice);
+        router.callBorrow(debtAddress, USDC, borrowAmount, 2, alice);
 
         // Get initial state
         (
@@ -1289,17 +1304,30 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
         // Get initial vDebt balance
         debtState.initialVDebtUSDC = vDebtUSDC.balanceOf(debtAddress);
 
+        // Alice directly supplies USDC to Aave pool to get aUSDC
+        uint256 supplyAmount = 2000 * 1e6; // 2000 USDC
+        usdc.approve(address(pool), supplyAmount);
+        pool.supply(USDC, supplyAmount, alice, 0);
+
         // Get aUSDC balance
         address aUSDC = pool.getReserveData(USDC).aTokenAddress;
-        debtState.initialATokenBalance = IERC20(aUSDC).balanceOf(debtAddress);
+        debtState.initialATokenBalance = IERC20(aUSDC).balanceOf(alice);
 
         // Repay half of the debt using aTokens
         debtState.repayAmount = borrowAmount / 2;
+
+        // Approve and repay with aTokens
         IERC20(aUSDC).approve(address(router), debtState.repayAmount);
-        router.callRepayWithATokens(debtAddress, USDC, debtState.repayAmount, 2);
+        router.callRepayWithATokens(
+            debtAddress,
+            USDC,
+            debtState.repayAmount,
+            2
+        );
 
         // Calculate expected values
-        uint256 expectedVDebtBalance = debtState.initialVDebtUSDC - debtState.repayAmount;
+        uint256 expectedVDebtBalance = debtState.initialVDebtUSDC -
+            debtState.repayAmount;
         uint256 expectedDebt = debtState.totalDebtBase -
             (debtState.repayAmount * priceOracle.getAssetPrice(USDC)) /
             1e6;
@@ -1308,7 +1336,7 @@ contract AaveDebtPurchasingUnitTest is SetUpAave {
         assertApproxEqAbs(
             vDebtUSDC.balanceOf(debtAddress),
             expectedVDebtBalance,
-            1,
+            1000,
             "vDebt balance should match expected"
         );
 

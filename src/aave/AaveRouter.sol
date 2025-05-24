@@ -9,7 +9,6 @@ import "@aave/core-v3/contracts/dependencies/openzeppelin/contracts/SafeERC20.so
 import "@aave/core-v3/contracts/dependencies/openzeppelin/contracts/IERC20Detailed.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-
 import "./interfaces/IAaveDebt.sol";
 import "./interfaces/IAaveRouter.sol";
 
@@ -140,10 +139,11 @@ contract AaveRouter is IAaveRouter {
         address debt,
         address asset,
         uint256 amount,
-        uint256 interestRateMode
+        uint256 interestRateMode,
+        address receiver
     ) external {
         require(debtOwners[debt] == msg.sender, "Not owner");
-        IAaveDebt(debt).borrow(asset, amount, interestRateMode);
+        IAaveDebt(debt).borrow(asset, amount, interestRateMode, receiver);
 
         emit Borrow(debt, asset, amount, interestRateMode);
     }
@@ -166,8 +166,16 @@ contract AaveRouter is IAaveRouter {
         uint256 interestRateMode
     ) external {
         IERC20(asset).safeTransferFrom(msg.sender, address(this), amount);
+        // Always do a two-step approve for USDT compatibility
+        IERC20(asset).approve(address(aavePool), 0);
         IERC20(asset).approve(address(aavePool), amount);
-        aavePool.repay(asset, amount, interestRateMode, debt);
+        uint256 amountRepaid = aavePool.repay(
+            asset,
+            amount,
+            interestRateMode,
+            debt
+        );
+        IERC20(asset).safeTransfer(msg.sender, amount - amountRepaid);
         emit Repay(debt, asset, amount, interestRateMode);
     }
 
@@ -191,7 +199,15 @@ contract AaveRouter is IAaveRouter {
             permitS
         );
         IERC20(asset).safeTransferFrom(msg.sender, address(this), amount);
+        IERC20(asset).approve(address(aavePool), 0);
         IERC20(asset).approve(address(aavePool), amount);
+        uint256 amountRepaid = aavePool.repay(
+            asset,
+            amount,
+            interestRateMode,
+            debt
+        );
+        IERC20(asset).safeTransfer(msg.sender, amount - amountRepaid);
         aavePool.repay(asset, amount, interestRateMode, debt);
 
         emit Repay(debt, asset, amount, interestRateMode);
@@ -357,7 +373,7 @@ contract AaveRouter is IAaveRouter {
     function _getTokenValueFromBaseValue(
         uint256 baseValue, // 18 decimals
         address token,
-        uint256 tokenPrice // 8 decimals,
+        uint256 tokenPrice // 8 decimals
     ) public view returns (uint256) {
         uint8 tokenDecimals = IERC20Detailed(token).decimals();
         uint8 priceDecimals = 8;

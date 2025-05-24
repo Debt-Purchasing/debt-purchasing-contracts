@@ -9,7 +9,8 @@ interface IAaveDebt {
     function borrow(
         address asset,
         uint256 amount,
-        uint256 interestRateMode
+        uint256 interestRateMode,
+        address receiver
     ) external;
 
     function withdraw(address asset, uint256 amount, address to) external;

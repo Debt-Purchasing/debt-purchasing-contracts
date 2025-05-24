@@ -29,9 +29,11 @@ contract AaveDebt {
     function borrow(
         address asset,
         uint256 amount,
-        uint256 interestRateMode
+        uint256 interestRateMode,
+        address receiver
     ) external onlyRouter {
         aavePool.borrow(asset, amount, interestRateMode, 0, address(this));
+        IERC20(asset).safeTransfer(receiver, amount);
     }
 
     function withdraw(

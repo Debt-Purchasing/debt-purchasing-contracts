@@ -40,6 +40,9 @@ contract SetUpAave is Test {
     address public daniel;
     address public elio;
 
+    // Private keys for signing
+    uint256 public alicePrivateKey;
+
     // Aave contracts
     IPool public pool;
     IPoolAddressesProvider public addressesProvider;
@@ -60,6 +63,8 @@ contract SetUpAave is Test {
     // Debt token contracts for borrows
     IERC20 public vDebtUSDC;
     IERC20 public vDebtUSDT;
+    IERC20 public vDebtAAVE;
+    IERC20 public vDebtDAI;
 
     // Mock Price Oracle
     PriceOracle public priceOracle;
@@ -71,13 +76,13 @@ contract SetUpAave is Test {
         // Deploy mock price oracle
         priceOracle = new PriceOracle();
 
-        // Setup test accounts
-        admin = makeAddr("admin");
-        alice = makeAddr("alice");
-        bob = makeAddr("bob");
-        carol = makeAddr("carol");
-        daniel = makeAddr("daniel");
-        elio = makeAddr("elio");
+        // Setup test accounts with private keys
+        (admin, ) = makeAddrAndKey("admin");
+        (alice, alicePrivateKey) = makeAddrAndKey("alice");
+        (bob, ) = makeAddrAndKey("bob");
+        (carol, ) = makeAddrAndKey("carol");
+        (daniel, ) = makeAddrAndKey("daniel");
+        (elio, ) = makeAddrAndKey("elio");
 
         // Initialize Aave contracts
         pool = IPool(AAVE_V3_POOL);
@@ -101,6 +106,8 @@ contract SetUpAave is Test {
         // Initialize debt token contracts
         vDebtUSDC = IERC20(pool.getReserveData(USDC).variableDebtTokenAddress);
         vDebtUSDT = IERC20(pool.getReserveData(USDT).variableDebtTokenAddress);
+        vDebtAAVE = IERC20(pool.getReserveData(AAVE).variableDebtTokenAddress);
+        vDebtDAI = IERC20(pool.getReserveData(DAI).variableDebtTokenAddress);
 
         // Set new price oracle in Aave
         vm.prank(Ownable(address(addressesProvider)).owner());
