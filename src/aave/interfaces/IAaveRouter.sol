@@ -22,7 +22,6 @@ interface IAaveRouter {
     struct PartialSellOrder {
         OrderTitle title;
         uint256 interestRateMode;
-        uint256 minHF;
         address[] collateralOut;
         uint256[] percents;
         address repayToken;

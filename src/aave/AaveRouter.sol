@@ -24,7 +24,7 @@ contract AaveRouter is IAaveRouter {
 
     bytes32 public constant PARTIAL_SELL_ORDER_TYPE_HASH =
         keccak256(
-            "PartialSellOrder(uint256 chainId,address contract,OrderTitle title,uint256 interestRateMode,uint256 mintHF,address[] collateralOut,uint256[] percents,address repayToken,uint256 repayAmount,uint256 bonus)"
+            "PartialSellOrder(uint256 chainId,address contract,OrderTitle title,uint256 interestRateMode,address[] collateralOut,uint256[] percents,address repayToken,uint256 repayAmount,uint256 bonus)"
         );
 
     bytes32 public constant ORDER_TITLE_TYPE_HASH =
@@ -309,10 +309,10 @@ contract AaveRouter is IAaveRouter {
         // verify signature
         require(_verifyPartialSellOrder(order, seller), "Invalid signature");
 
-        (, , , , , uint256 hf) = aavePool.getUserAccountData(debt);
+        (, , , , , uint256 initialHF) = aavePool.getUserAccountData(debt);
 
         // check HF
-        require(hf <= order.title.triggerHF, "HF too high");
+        require(initialHF <= order.title.triggerHF, "HF too high");
 
         // transfer repayAmount from buyer to contract
         IERC20(order.repayToken).safeTransferFrom(
@@ -341,10 +341,10 @@ contract AaveRouter is IAaveRouter {
         // withdraw collaterals
         for (uint256 i = 0; i < order.collateralOut.length; i++) {
             totalPercent += order.percents[i];
-            uint256 withdrawAmount = (repayAmountInBase * order.percents[i]) /
-                ONE_HUNDRED_PERCENT;
+            uint256 withdrawAmountInBase = (repayAmountInBase *
+                order.percents[i]) / ONE_HUNDRED_PERCENT;
             uint256 withdrawAmountInToken = _getTokenValueFromBaseValue(
-                withdrawAmount,
+                withdrawAmountInBase,
                 order.collateralOut[i],
                 aaveOracle.getAssetPrice(order.collateralOut[i])
             );
@@ -363,9 +363,9 @@ contract AaveRouter is IAaveRouter {
 
         require(totalPercent == ONE_HUNDRED_PERCENT, "One hundred percent");
 
-        // check final HF
-        (, , , , , hf) = aavePool.getUserAccountData(debt);
-        require(hf >= order.minHF, "Final HF too low");
+        // check final HF is better than initial HF
+        (, , , , , uint256 finalHF) = aavePool.getUserAccountData(debt);
+        require(finalHF > initialHF, "HF must improve");
 
         emit ExecutePartialSellOrder(debt, order.title.debtNonce, msg.sender);
     }
@@ -437,7 +437,6 @@ contract AaveRouter is IAaveRouter {
                 address(this),
                 _titleHash(order.title),
                 order.interestRateMode,
-                order.minHF,
                 order.collateralOut,
                 order.percents,
                 order.repayToken,
