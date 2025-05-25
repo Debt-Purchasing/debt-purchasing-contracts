@@ -19,7 +19,7 @@ contract AaveRouter is IAaveRouter {
 
     bytes32 public constant FULL_SELL_ORDER_TYPE_HASH =
         keccak256(
-            "FullSellOrder(uint256 chainId,address contract,OrderTitle title,address fullSaleToken,uint256 fullSaleExtra)"
+            "FullSellOrder(uint256 chainId,address contract,OrderTitle title,address token,uint256 percentOfEquity)"
         );
 
     bytes32 public constant PARTIAL_SELL_ORDER_TYPE_HASH =
@@ -267,25 +267,28 @@ contract AaveRouter is IAaveRouter {
         // check HF
         require(hf <= order.title.triggerHF, "HF too high");
 
-        // calculate basePayValue based on fullSaleExtra
-        uint256 basePayValue = (totalDebtBase * order.fullSaleExtra) /
+        // calculate net equity (collateral - debt)
+        uint256 netEquity = totalCollateralBase - totalDebtBase;
+
+        // calculate premium based on percentOfEquity percentage of net equity
+        uint256 premiumValue = (netEquity * order.percentOfEquity) /
             ONE_HUNDRED_PERCENT;
 
-        // check profit
+        // check profit (remaining collateral after buyer pays debt + premium)
         require(
-            totalCollateralBase - (totalDebtBase + basePayValue) >= minProfit,
+            totalCollateralBase - (totalDebtBase + premiumValue) >= minProfit,
             "Insufficient profit"
         );
 
-        // convert totalDebtBase (in USD 1e8) to fullSaleToken amount
+        // convert premium to token amount
         uint256 fullSalePayValue = _getTokenValueFromBaseValue(
-            basePayValue,
-            order.fullSaleToken,
-            aaveOracle.getAssetPrice(order.fullSaleToken)
+            premiumValue,
+            order.token,
+            aaveOracle.getAssetPrice(order.token)
         );
 
-        // transfer fullSalePayValue from buyer to seller
-        IERC20(order.fullSaleToken).safeTransferFrom(
+        // transfer premium from buyer to seller
+        IERC20(order.token).safeTransferFrom(
             msg.sender,
             seller,
             fullSalePayValue
@@ -367,6 +370,9 @@ contract AaveRouter is IAaveRouter {
         (, , , , , uint256 finalHF) = aavePool.getUserAccountData(debt);
         require(finalHF > initialHF, "HF must improve");
 
+        // increase debt nonce to cancel all currentOrder
+        debtNonces[debt] += 1;
+
         emit ExecutePartialSellOrder(debt, order.title.debtNonce, msg.sender);
     }
 
@@ -418,8 +424,8 @@ contract AaveRouter is IAaveRouter {
                 block.chainid,
                 address(this),
                 _titleHash(order.title),
-                order.fullSaleToken,
-                order.fullSaleExtra
+                order.token,
+                order.percentOfEquity
             )
         );
 

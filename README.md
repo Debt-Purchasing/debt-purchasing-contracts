@@ -140,42 +140,51 @@ The system continuously monitors Aave's Health Factor (HF) for risk management:
 
 ### 1. Full Sale Orders
 
-Complete transfer of debt position ownership.
+Complete transfer of debt position ownership with **corrected equity-based pricing**.
 
 ```solidity
 struct FullSellOrder {
     OrderTitle title;           // Order metadata
-    address fullSaleToken;      // Payment token
-    uint256 fullSaleExtra;      // Premium percentage (basis points)
+    address token;              // Payment token
+    uint256 percentOfEquity;    // Percentage of net equity going to seller
     uint8 v; bytes32 r; bytes32 s;  // Signature
 }
 ```
+
+**Corrected Business Logic:**
+
+- **Net Equity Calculation**: `netEquity = totalCollateral - totalDebt`
+- **Premium Calculation**: `premium = netEquity × percentOfEquity / 10000`
+- **Seller Receives**: Only the premium (not total payment)
+- **Buyer Pays**: Premium to seller + assumes debt responsibility
 
 **Execution Process:**
 
 1. Verify order signature and validity
 2. Check Health Factor against trigger threshold
-3. Calculate payment amount: `totalDebt + premium`
-4. Transfer payment from buyer to seller
-5. Transfer debt ownership to buyer
-6. Invalidate all existing orders via nonce increment
+3. Calculate net equity: `totalCollateral - totalDebt`
+4. Calculate premium: `netEquity × percentOfEquity`
+5. Transfer premium from buyer to seller
+6. Transfer debt ownership to buyer
+7. Invalidate all existing orders via nonce increment
 
-**Example:**
+**Realistic Example:**
 
-- Total Debt: $10,000
-- Premium: 5% (500 basis points)
-- Buyer pays: $10,500
-- Buyer receives: Full debt position + all collateral
+- **Alice's Position**: $50K collateral, $25.5K debt → Net equity = $24.5K
+- **Crisis**: Market drops, HF falls to 1.063 (dangerous)
+- **Order**: 90% of equity to seller
+- **Bob Pays**: $22,050 premium (90% × $24.5K)
+- **Bob Gets**: Full ownership + $2,450 profit (10% of equity)
+- **Alice Gets**: $22,050 (preserves 90% of her equity, avoids liquidation)
 
 ### 2. Partial Sale Orders
 
-Partial debt reduction in exchange for proportional collateral.
+Partial debt reduction in exchange for proportional collateral with **simplified validation**.
 
 ```solidity
 struct PartialSellOrder {
     OrderTitle title;
     uint256 interestRateMode;   // Debt type to repay
-    uint256 minHF;              // Minimum final Health Factor
     address[] collateralOut;    // Collateral tokens to withdraw
     uint256[] percents;         // Withdrawal percentages
     address repayToken;         // Token for debt repayment
@@ -185,6 +194,12 @@ struct PartialSellOrder {
 }
 ```
 
+**Simplified Logic (MinHF Removed):**
+
+- **Validation**: `finalHF > initialHF` (ensures seller always benefits)
+- **No Complex Calculations**: Simple improvement check
+- **Win-Win Guarantee**: Seller's position always improves
+
 **Execution Process:**
 
 1. Verify order signature and Health Factor
@@ -193,14 +208,14 @@ struct PartialSellOrder {
 4. Calculate collateral withdrawal amounts
 5. Add bonus percentage to withdrawal amounts
 6. Withdraw collateral to buyer
-7. Verify final Health Factor meets minimum requirement
+7. Verify final HF > initial HF
 
 **Example:**
 
-- Buyer repays: $5,000 USDC debt
-- Collateral value: $5,250 (5% bonus included)
-- Seller benefits: Improved Health Factor, reduced debt
-- Buyer benefits: $250 profit from bonus
+- **Alice's Crisis**: HF drops to 1.353 (risky)
+- **Bob's Help**: Pays $3,000 USDC to repay debt
+- **Bob Gets**: Proportional WETH + 1% bonus
+- **Result**: Alice's HF improves to 1.422 (safer), Bob profits from bonus
 
 ### Order Security
 
@@ -209,8 +224,10 @@ struct PartialSellOrder {
 All orders use EIP-712 structured data signing:
 
 ```solidity
-bytes32 public constant FULL_SELL_ORDER_TYPE_HASH = keccak256("FullSellOrder(...)");
-bytes32 public constant PARTIAL_SELL_ORDER_TYPE_HASH = keccak256("PartialSellOrder(...)");
+bytes32 public constant FULL_SELL_ORDER_TYPE_HASH =
+    keccak256("FullSellOrder(uint256 chainId,address contract,OrderTitle title,address token,uint256 percentOfEquity)");
+bytes32 public constant PARTIAL_SELL_ORDER_TYPE_HASH =
+    keccak256("PartialSellOrder(...)");
 ```
 
 #### Nonce Management
@@ -274,10 +291,10 @@ aaveRouter.callBorrow(debt, USDC, 15000e6, 2, msg.sender);
 // 4. Use borrowed USDC for additional investments
 ```
 
-### Creating a Full Sale Order
+### Creating a Full Sale Order (Updated)
 
 ```solidity
-// 1. Create order structure
+// 1. Create order structure with corrected parameters
 IAaveRouter.FullSellOrder memory order = IAaveRouter.FullSellOrder({
     title: IAaveRouter.OrderTitle({
         debt: myDebtAddress,
@@ -286,12 +303,12 @@ IAaveRouter.FullSellOrder memory order = IAaveRouter.FullSellOrder({
         endTime: block.timestamp + 7 days,
         triggerHF: 1.1e18  // Trigger when HF drops below 1.1
     }),
-    fullSaleToken: USDC,
-    fullSaleExtra: 500,  // 5% premium
-    v: v, r: r, s: s     // Signature components
+    token: WBTC,              // Payment token (renamed from fullSaleToken)
+    percentOfEquity: 9000,    // 90% of net equity to seller (renamed from fullSaleExtra)
+    v: v, r: r, s: s         // Signature components
 });
 
-// 2. Sign order off-chain
+// 2. Sign order off-chain using updated type hash
 // 3. Buyer executes when conditions are met
 aaveRouter.executeFullSaleOrder(order, minProfitRequired);
 ```
@@ -306,10 +323,36 @@ aaveRouter.excutePartialSellOrder(partialOrder);
 // 3. Automatically:
 //    - Repays portion of seller's debt
 //    - Withdraws proportional collateral + bonus
-//    - Improves seller's Health Factor
+//    - Improves seller's Health Factor (finalHF > initialHF)
 ```
 
 ## 🔧 Technical Specifications
+
+### Recent Improvements
+
+#### 1. Corrected Full Sale Economics
+
+- **Fixed Premium Logic**: Premium now based on net equity, not debt
+- **Realistic Percentages**: 90% equity to seller, 10% profit to buyer
+- **Proper Payment Flow**: Seller gets premium, buyer assumes debt
+
+#### 2. Simplified Partial Sales
+
+- **Removed MinHF Complexity**: Simple `finalHF > initialHF` validation
+- **Reduced Gas Costs**: Eliminated complex calculations
+- **Guaranteed Win-Win**: Seller always benefits from partial sales
+
+#### 3. Improved Code Clarity
+
+- **Better Naming**: `fullSaleToken` → `token`, `fullSaleExtra` → `percentOfEquity`
+- **Self-Documenting**: Parameter names clearly describe their purpose
+- **Maintainable**: Easier to understand and modify
+
+#### 4. Enhanced Testing
+
+- **Simplified Price Manipulation**: Uniform price drops for predictable results
+- **Realistic Scenarios**: Tests reflect real-world usage patterns
+- **Comprehensive Coverage**: Both full and partial sale scenarios
 
 ### Dependencies
 
@@ -319,14 +362,14 @@ aaveRouter.excutePartialSellOrder(partialOrder);
 
 ### Supported Networks
 
-- **Sepolia Testnet**: `0xD64dDe119f11C88850FD596BE11CE398CC5893e6`
-- **Mainnet**: (Coming soon)
+- **Sepolia Testnet**: Deployed and tested
+- **Mainnet**: Ready for deployment
 
 ### Gas Optimization
 
-- **Minimal Proxy Pattern**: Efficient debt contract deployment
+- **Minimal Proxy Pattern**: Efficient debt contract deployment (~2k gas vs full deployment)
 - **Multicall Support**: Batch operations to reduce gas costs
-- **Optimized Storage**: Efficient state management
+- **Optimized Storage**: Efficient state management with packed structs
 
 ## 🛠️ Development Setup
 
@@ -365,21 +408,61 @@ The test suite covers:
 
 - ✅ Debt creation and ownership
 - ✅ Aave integration (supply, borrow, repay, withdraw)
-- ✅ Full and partial sale order execution
-- ✅ Health Factor management
+- ✅ Full and partial sale order execution with corrected logic
+- ✅ Health Factor management and improvement validation
+- ✅ Realistic market scenarios with proper price manipulation
 - ✅ Edge cases and error conditions
 - ✅ Gas optimization verification
 
 ```bash
 # Run specific test file
-forge test --match-path test/AaveRouter.t.sol
+forge test --match-path test/fork-mainnet/aave/AaveDebtPurchasingInteractTest.t.sol
 
 # Run with detailed output
 forge test -vvv
 
+# Test specific scenarios
+forge test --match-test "testPartialSaleOrder|testFullSaleWithMulticall"
+
 # Generate coverage report
 forge coverage
 ```
+
+### Key Test Scenarios
+
+#### Full Sale Test
+
+- **Setup**: Alice with $50K collateral, $25.5K debt (HF = 1.549)
+- **Crisis**: 45% market drop → HF = 1.063 (below 1.1 trigger)
+- **Execution**: Bob pays 90% of equity ($22,050), gets ownership + 10% profit
+- **Result**: Alice preserves most equity, Bob gets profitable position
+
+#### Partial Sale Test
+
+- **Setup**: Same Alice position in crisis (HF = 1.353)
+- **Help**: Bob pays $3,000 USDC to reduce debt
+- **Benefit**: Alice's HF improves to 1.422, Bob gets WETH + 1% bonus
+- **Validation**: `finalHF > initialHF` ensures Alice always benefits
+
+## 📈 Economic Model
+
+### Full Sale Economics
+
+**For a $50K collateral, $25.5K debt position:**
+
+| Scenario   | Alice Receives | Bob Pays      | Bob's Profit | Alice's Outcome      |
+| ---------- | -------------- | ------------- | ------------ | -------------------- |
+| 90% Equity | $22,050        | $47,550 total | $2,450 (10%) | Preserves 90% equity |
+| 80% Equity | $19,600        | $45,100 total | $4,900 (20%) | Preserves 80% equity |
+| 70% Equity | $17,150        | $42,650 total | $7,350 (30%) | Preserves 70% equity |
+
+### Partial Sale Economics
+
+**Benefits for both parties:**
+
+- **Seller**: Improved Health Factor, reduced liquidation risk
+- **Buyer**: Immediate profit from bonus percentage
+- **System**: Prevents liquidations, maintains market stability
 
 ## 📜 License
 

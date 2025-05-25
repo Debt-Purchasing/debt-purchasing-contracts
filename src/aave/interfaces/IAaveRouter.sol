@@ -12,8 +12,8 @@ interface IAaveRouter {
 
     struct FullSellOrder {
         OrderTitle title;
-        address fullSaleToken;
-        uint256 fullSaleExtra;
+        address token;
+        uint256 percentOfEquity;
         uint8 v;
         bytes32 r;
         bytes32 s;
