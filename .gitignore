@@ -5,6 +5,9 @@ node_modules/
 # Ignore subgraph directory (separate repo)
 subgraph/
 
+# Ignore any potential subgraph clone attempts
+debt-purchasing-subgraph/
+
 .env
 .cursor/
 
