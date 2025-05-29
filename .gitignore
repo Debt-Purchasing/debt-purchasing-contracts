@@ -1,4 +1,16 @@
 cache/
 out/
+node_modules/
+
+# Ignore subgraph directory (separate repo)
+subgraph/
+
 .env
 .cursor/
+
+build/
+generated/
+.DS_Store
+*.log
+.env*
+dist/
