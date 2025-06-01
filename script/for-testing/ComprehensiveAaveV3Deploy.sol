@@ -20,6 +20,7 @@ import {ERC20} from "@aave/core-v3/contracts/dependencies/openzeppelin/contracts
 import {AaveOracle} from "@aave/core-v3/contracts/misc/AaveOracle.sol";
 import {SimpleERC20} from "./mocks/SimpleERC20.sol";
 import {ChainlinkMockAggregator} from "./mocks/ChainlinkMockAggregator.sol";
+import {OracleManager} from "./OracleManager.sol";
 
 contract MainnetAccurateAaveV3Deploy is Script {
     // Token Configuration with REAL mainnet data
@@ -51,6 +52,7 @@ contract MainnetAccurateAaveV3Deploy is Script {
         address poolConfiguratorProxy;
         address aclManager;
         address aaveOracle;
+        address oracleManager;
         // Interest rate strategies
         address stablecoinStrategy;
         address ethStrategy;
@@ -69,31 +71,42 @@ contract MainnetAccurateAaveV3Deploy is Script {
     function run() external {
         vm.startBroadcast();
 
-        console.log("=== Deploying Mainnet-Accurate Aave V3 to Sepolia ===");
+        if (block.chainid == 11155111) {
+            console.log(
+                "=== Deploying Mainnet-Accurate Aave V3 to Sepolia ==="
+            );
+        } else if (block.chainid == 31337) {
+            console.log("=== Deploying Mainnet-Accurate Aave V3 to Anvil ===");
+        } else {
+            revert("Unsupported chain");
+        }
 
         DeploymentAddresses memory deployment;
 
         // 1. Deploy all tokens
         deployAllTokens();
 
-        // 2. Deploy Chainlink oracles
-        deployChainlinkOracles();
+        // 2. Deploy OracleManager
+        deployment.oracleManager = deployOracleManager();
 
-        // 3. Deploy Aave Oracle
+        // 3. Deploy Chainlink oracles
+        deployChainlinkOracles(deployment.oracleManager);
+
+        // 4. Deploy Aave Oracle
         deployment.aaveOracle = deployAaveOracle();
 
-        // 4. Deploy core Aave V3 infrastructure
+        // 5. Deploy core Aave V3 infrastructure
         deployment = deployCoreInfrastructure(deployment);
 
-        // 5. Deploy interest rate strategies
+        // 6. Deploy interest rate strategies
         deployment = deployInterestRateStrategies(deployment);
 
-        // 6. Configure all reserves
+        // 7. Configure all reserves
         configureAllReserves(deployment);
 
         vm.stopBroadcast();
 
-        // 7. Log all addresses
+        // 8. Log all addresses
         logDeploymentAddresses(deployment);
     }
 
@@ -355,14 +368,17 @@ contract MainnetAccurateAaveV3Deploy is Script {
         }
     }
 
-    function deployChainlinkOracles() internal {
+    function deployChainlinkOracles(address _oraleManager) internal {
         console.log("Deploying Chainlink mock oracles...");
 
         TokenConfig[12] memory configs = getTokenConfigs();
 
         for (uint i = 0; i < 12; i++) {
             address oracle = address(
-                new ChainlinkMockAggregator(configs[i].initialPrice)
+                new ChainlinkMockAggregator(
+                    _oraleManager,
+                    configs[i].initialPrice
+                )
             );
             deployedOracles.push(oracle);
             console.log(
@@ -692,6 +708,16 @@ contract MainnetAccurateAaveV3Deploy is Script {
             keccak256(bytes(symbol)) == keccak256(bytes("rETH")));
     }
 
+    function deployOracleManager() internal returns (address) {
+        console.log("Deploying OracleManager...");
+
+        address oracleManager = address(new OracleManager());
+
+        console.log("OracleManager deployed at:", oracleManager);
+
+        return oracleManager;
+    }
+
     function logDeploymentAddresses(
         DeploymentAddresses memory deployment
     ) internal view {
@@ -704,6 +730,7 @@ contract MainnetAccurateAaveV3Deploy is Script {
         );
         console.log("ACL Manager:", deployment.aclManager);
         console.log("Aave Oracle:", deployment.aaveOracle);
+        console.log("Oracle Manager:", deployment.oracleManager);
 
         console.log("\n=== INTEREST RATE STRATEGIES ===");
         console.log("Stablecoin Strategy:", deployment.stablecoinStrategy);

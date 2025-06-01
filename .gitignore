@@ -17,3 +17,6 @@ generated/
 *.log
 .env*
 dist/
+.env.local
+.env.sepolia
+broadcast/

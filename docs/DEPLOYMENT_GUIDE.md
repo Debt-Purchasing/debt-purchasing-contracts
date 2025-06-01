@@ -75,7 +75,7 @@ WBTC: 0x...
 
 ### 4. Update Oracle Script
 
-Copy the deployed addresses and update `script/deploy-aavev3-sepolia/UpdateOracle.sol`:
+Copy the deployed addresses and update `script/for-testing/UpdateOracle.sol`:
 
 ```solidity
 // Oracle addresses (update after deployment)
@@ -91,7 +91,7 @@ address constant WBTC = 0x...; // Your deployed WBTC
 ### Basic Price Update
 
 ```bash
-forge script script/deploy-aavev3-sepolia/UpdateOracle.sol:UpdateOracle \
+forge script script/for-testing/UpdateOracle.sol:UpdateOracle \
     --rpc-url $SEPOLIA_RPC_URL \
     --private-key $PRIVATE_KEY \
     --broadcast
@@ -101,21 +101,21 @@ forge script script/deploy-aavev3-sepolia/UpdateOracle.sol:UpdateOracle \
 
 ```bash
 # Bear market (prices drop)
-forge script script/deploy-aavev3-sepolia/UpdateOracle.sol:UpdateOracle \
+forge script script/for-testing/UpdateOracle.sol:UpdateOracle \
     --sig "simulateBearMarket()" \
     --rpc-url $SEPOLIA_RPC_URL \
     --private-key $PRIVATE_KEY \
     --broadcast
 
 # Bull market (prices rise)
-forge script script/deploy-aavev3-sepolia/UpdateOracle.sol:UpdateOracle \
+forge script script/for-testing/UpdateOracle.sol:UpdateOracle \
     --sig "simulateBullMarket()" \
     --rpc-url $SEPOLIA_RPC_URL \
     --private-key $PRIVATE_KEY \
     --broadcast
 
 # Reset to initial prices
-forge script script/deploy-aavev3-sepolia/UpdateOracle.sol:UpdateOracle \
+forge script script/for-testing/UpdateOracle.sol:UpdateOracle \
     --sig "resetToInitialPrices()" \
     --rpc-url $SEPOLIA_RPC_URL \
     --private-key $PRIVATE_KEY \
@@ -165,7 +165,7 @@ dataSources:
 ```bash
 # 1. Create position with WBTC collateral, USDC debt
 # 2. Drop WBTC price by 30%
-forge script script/deploy-aavev3-sepolia/UpdateOracle.sol:UpdateOracle \
+forge script script/for-testing/UpdateOracle.sol:UpdateOracle \
     --sig "updateWBTCPrice(int256)" 42000_00000000 \
     --rpc-url $SEPOLIA_RPC_URL \
     --private-key $PRIVATE_KEY \

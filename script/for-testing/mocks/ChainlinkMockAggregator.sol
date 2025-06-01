@@ -22,13 +22,23 @@ contract ChainlinkMockAggregator {
         uint256 startedAt
     );
 
-    constructor(int256 initialAnswer) {
+    // State variables
+    address public owner;
+
+    // Modifiers
+    modifier onlyOwner() {
+        require(msg.sender == owner, "OracleManager: caller is not the owner");
+        _;
+    }
+
+    constructor(address _owner, int256 initialAnswer) {
+        owner = _owner;
         _latestAnswer = initialAnswer;
         _latestTimestamp = block.timestamp;
         _latestRound = 1;
     }
 
-    function updateAnswer(int256 newAnswer) external {
+    function updateAnswer(int256 newAnswer) external onlyOwner {
         _latestRound++;
         _latestAnswer = newAnswer;
         _latestTimestamp = block.timestamp;

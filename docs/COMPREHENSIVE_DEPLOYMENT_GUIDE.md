@@ -97,7 +97,7 @@ OracleAddresses memory oracles = OracleAddresses({
 
 ```bash
 # Bull Market (+30-50% gains)
-forge script script/deploy-aavev3-sepolia/UpdateComprehensiveOracles.sol:UpdateComprehensiveOracles \
+forge script script/for-testing/UpdateComprehensiveOracles.sol:UpdateComprehensiveOracles \
     --rpc-url $SEPOLIA_RPC_URL --private-key $PRIVATE_KEY --broadcast
 
 # Bear Market (-20-40% decline)
