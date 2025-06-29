@@ -1,0 +1,50 @@
+[
+  {
+    "token": "WETH",
+    "price": "243534502487"
+  },
+  {
+    "token": "wstETH",
+    "price": "293638692888"
+  },
+  {
+    "token": "WBTC",
+    "price": "10711203110023"
+  },
+  {
+    "token": "USDC",
+    "price": "99980096"
+  },
+  {
+    "token": "DAI",
+    "price": "99942551"
+  },
+  {
+    "token": "LINK",
+    "price": "1333912353"
+  },
+  {
+    "token": "AAVE",
+    "price": "25907799388"
+  },
+  {
+    "token": "cbETH",
+    "price": "268433809697"
+  },
+  {
+    "token": "USDT",
+    "price": "100028847"
+  },
+  {
+    "token": "rETH",
+    "price": "277416615002"
+  },
+  {
+    "token": "LUSD",
+    "price": "100252989"
+  },
+  {
+    "token": "CRV",
+    "price": "51478543"
+  }
+]
