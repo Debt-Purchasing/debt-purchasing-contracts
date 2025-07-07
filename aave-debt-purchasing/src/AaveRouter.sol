@@ -9,28 +9,25 @@ import "@aave/core-v3/contracts/dependencies/openzeppelin/contracts/SafeERC20.so
 import "@aave/core-v3/contracts/dependencies/openzeppelin/contracts/IERC20Detailed.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+
 import "./interfaces/IAaveDebt.sol";
 import "./interfaces/IAaveRouter.sol";
 
-contract AaveRouter is IAaveRouter {
+contract AaveRouter is IAaveRouter, EIP712 {
     using SafeERC20 for IERC20;
+    using ECDSA for bytes32;
 
     uint256 public constant ONE_HUNDRED_PERCENT = 10_000;
 
-    // EIP-712 Domain Separator
-    bytes32 public constant DOMAIN_TYPE_HASH =
-        keccak256(
-            "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
-        );
-
     bytes32 public constant FULL_SELL_ORDER_TYPE_HASH =
         keccak256(
-            "FullSellOrder(uint256 chainId,address contract,OrderTitle title,address token,uint256 percentOfEquity)"
+            "FullSellOrder(OrderTitle title,address token,uint256 percentOfEquity)OrderTitle(address debt,uint256 debtNonce,uint256 startTime,uint256 endTime,uint256 triggerHF)"
         );
 
     bytes32 public constant PARTIAL_SELL_ORDER_TYPE_HASH =
         keccak256(
-            "PartialSellOrder(uint256 chainId,address contract,OrderTitle title,uint256 interestRateMode,address[] collateralOut,uint256[] percents,address repayToken,uint256 repayAmount,uint256 bonus)"
+            "PartialSellOrder(OrderTitle title,uint256 interestRateMode,address collateralOut,address repayToken,uint256 repayAmount,uint256 bonus)OrderTitle(address debt,uint256 debtNonce,uint256 startTime,uint256 endTime,uint256 triggerHF)"
         );
 
     bytes32 public constant ORDER_TITLE_TYPE_HASH =
@@ -38,17 +35,11 @@ contract AaveRouter is IAaveRouter {
             "OrderTitle(address debt,uint256 debtNonce,uint256 startTime,uint256 endTime,uint256 triggerHF)"
         );
 
-    // EIP-712 Domain data
-    string public constant DOMAIN_NAME = "AaveRouter";
-    string public constant DOMAIN_VERSION = "1";
-
-    // EIP-712 Domain Separator (computed once)
-    bytes32 public immutable DOMAIN_SEPARATOR;
-
     address public immutable aaveDebtImplementation;
     mapping(address => uint256) public userNonces;
     mapping(address => address) public debtOwners;
     mapping(address => uint256) public debtNonces;
+    mapping(bytes32 => bool) public cancelledOrders;
 
     IPoolAddressesProvider public aavePoolAddressesProvider;
     IPool public aavePool;
@@ -57,7 +48,7 @@ contract AaveRouter is IAaveRouter {
     constructor(
         address _aaveDebtImplementation,
         address _aavePoolAddressesProvider
-    ) {
+    ) EIP712("AaveRouter", "1") {
         aaveDebtImplementation = _aaveDebtImplementation;
         aavePoolAddressesProvider = IPoolAddressesProvider(
             _aavePoolAddressesProvider
@@ -65,17 +56,6 @@ contract AaveRouter is IAaveRouter {
         aavePool = IPool(aavePoolAddressesProvider.getPool());
         aaveOracle = IPriceOracleGetter(
             aavePoolAddressesProvider.getPriceOracle()
-        );
-
-        // Compute EIP-712 Domain Separator once during deployment
-        DOMAIN_SEPARATOR = keccak256(
-            abi.encode(
-                DOMAIN_TYPE_HASH,
-                keccak256(bytes(DOMAIN_NAME)),
-                keccak256(bytes(DOMAIN_VERSION)),
-                block.chainid,
-                address(this)
-            )
         );
     }
 
@@ -99,14 +79,13 @@ contract AaveRouter is IAaveRouter {
     }
 
     function createDebt() external returns (address) {
-        bytes32 salt = keccak256(
-            abi.encodePacked(msg.sender, userNonces[msg.sender])
-        );
+        uint256 nonce = userNonces[msg.sender];
+        bytes32 salt = keccak256(abi.encodePacked(msg.sender, nonce));
         address clone = Clones.cloneDeterministic(aaveDebtImplementation, salt);
         IAaveDebt(clone).initialize(aavePool);
         debtOwners[clone] = msg.sender;
         userNonces[msg.sender] += 1;
-        emit CreateDebt(clone, msg.sender);
+        emit CreateDebt(clone, msg.sender, nonce);
         return clone;
     }
 
@@ -122,6 +101,11 @@ contract AaveRouter is IAaveRouter {
         require(msg.sender == debtOwners[debt], "Not owner");
         debtNonces[debt] += 1;
         emit CancelCurrentDebtOrders(debt);
+    }
+
+    function cancelOrder(bytes32 titleHash) external {
+        cancelledOrders[titleHash] = true;
+        emit CancelOrder(titleHash);
     }
 
     function callSupply(address debt, address asset, uint256 amount) external {
@@ -320,7 +304,14 @@ contract AaveRouter is IAaveRouter {
         // transfer ownership of debt to buyer
         debtOwners[debt] = msg.sender;
 
-        emit ExecuteFullSaleOrder(debt, order.title.debtNonce, msg.sender);
+        emit ExecuteFullSaleOrder(
+            _titleHash(order.title),
+            debt,
+            order.title.debtNonce,
+            seller,
+            msg.sender,
+            premiumValue
+        );
     }
 
     function excutePartialSellOrder(PartialSellOrder calldata order) external {
@@ -361,31 +352,23 @@ contract AaveRouter is IAaveRouter {
             aaveOracle.getAssetPrice(order.repayToken)
         );
 
-        uint256 totalPercent;
         // withdraw collaterals
-        for (uint256 i = 0; i < order.collateralOut.length; i++) {
-            totalPercent += order.percents[i];
-            uint256 withdrawAmountInBase = (repayAmountInBase *
-                order.percents[i]) / ONE_HUNDRED_PERCENT;
-            uint256 withdrawAmountInToken = _getTokenValueFromBaseValue(
-                withdrawAmountInBase,
-                order.collateralOut[i],
-                aaveOracle.getAssetPrice(order.collateralOut[i])
-            );
+        uint256 withdrawAmountInToken = _getTokenValueFromBaseValue(
+            repayAmountInBase,
+            order.collateralOut,
+            aaveOracle.getAssetPrice(order.collateralOut)
+        );
 
-            withdrawAmountInToken +=
-                (withdrawAmountInToken * order.bonus) /
-                ONE_HUNDRED_PERCENT;
+        withdrawAmountInToken +=
+            (withdrawAmountInToken * order.bonus) /
+            ONE_HUNDRED_PERCENT;
 
-            // withdraw collateral
-            IAaveDebt(debt).withdraw(
-                order.collateralOut[i],
-                withdrawAmountInToken,
-                msg.sender
-            );
-        }
-
-        require(totalPercent == ONE_HUNDRED_PERCENT, "One hundred percent");
+        // withdraw collateral
+        IAaveDebt(debt).withdraw(
+            order.collateralOut,
+            withdrawAmountInToken,
+            msg.sender
+        );
 
         // check final HF is better than initial HF
         (, , , , , uint256 finalHF) = aavePool.getUserAccountData(debt);
@@ -394,20 +377,23 @@ contract AaveRouter is IAaveRouter {
         // increase debt nonce to cancel all currentOrder
         debtNonces[debt] += 1;
 
-        emit ExecutePartialSellOrder(debt, order.title.debtNonce, msg.sender);
+        emit ExecutePartialSellOrder(
+            _titleHash(order.title),
+            debt,
+            order.title.debtNonce,
+            seller,
+            msg.sender,
+            repayAmountInBase
+        );
     }
 
     function _getTokenValueFromBaseValue(
-        uint256 baseValue, // 18 decimals
+        uint256 baseValue, // 8 decimals
         address token,
         uint256 tokenPrice // 8 decimals
     ) public view returns (uint256) {
         uint8 tokenDecimals = IERC20Detailed(token).decimals();
-        uint8 priceDecimals = 8;
-
-        return
-            (baseValue * 10 ** (tokenDecimals)) /
-            (tokenPrice * 10 ** (18 - priceDecimals));
+        return (baseValue * 10 ** (tokenDecimals)) / tokenPrice;
     }
 
     function _getBaseValueFromTokenValue(
@@ -416,11 +402,7 @@ contract AaveRouter is IAaveRouter {
         uint256 tokenPrice
     ) public view returns (uint256) {
         uint8 tokenDecimals = IERC20Detailed(token).decimals();
-        uint8 priceDecimals = 8;
-
-        return
-            (tokenValue * tokenPrice * 10 ** 18) /
-            (10 ** (priceDecimals + tokenDecimals));
+        return (tokenValue * tokenPrice) / 10 ** tokenDecimals;
     }
 
     function _verifyTitle(OrderTitle calldata title) internal view {
@@ -433,6 +415,8 @@ contract AaveRouter is IAaveRouter {
             title.debtNonce == debtNonces[title.debt],
             "Invalid debt nonce"
         );
+
+        require(!cancelledOrders[_titleHash(title)], "Order cancelled");
     }
 
     function _verifyFullSellOrder(
@@ -442,20 +426,15 @@ contract AaveRouter is IAaveRouter {
         bytes32 structHash = keccak256(
             abi.encode(
                 FULL_SELL_ORDER_TYPE_HASH,
-                block.chainid,
-                address(this),
                 _titleHash(order.title),
                 order.token,
                 order.percentOfEquity
             )
         );
 
-        // Create EIP-712 digest
-        bytes32 digest = keccak256(
-            abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash)
-        );
-
-        return signer == ECDSA.recover(digest, order.v, order.r, order.s);
+        return
+            signer ==
+            _hashTypedDataV4(structHash).recover(order.v, order.r, order.s);
     }
 
     function _verifyPartialSellOrder(
@@ -465,24 +444,18 @@ contract AaveRouter is IAaveRouter {
         bytes32 structHash = keccak256(
             abi.encode(
                 PARTIAL_SELL_ORDER_TYPE_HASH,
-                block.chainid,
-                address(this),
                 _titleHash(order.title),
                 order.interestRateMode,
                 order.collateralOut,
-                order.percents,
                 order.repayToken,
                 order.repayAmount,
                 order.bonus
             )
         );
 
-        // Create EIP-712 digest
-        bytes32 digest = keccak256(
-            abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash)
-        );
-
-        return signer == ECDSA.recover(digest, order.v, order.r, order.s);
+        return
+            signer ==
+            _hashTypedDataV4(structHash).recover(order.v, order.r, order.s);
     }
 
     function _titleHash(
@@ -500,6 +473,7 @@ contract AaveRouter is IAaveRouter {
                 )
             );
     }
+
     function _getRevertMsg(
         bytes memory revertData
     ) internal pure returns (string memory) {

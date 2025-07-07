@@ -159,66 +159,66 @@ contract GetMainnetAaveConfig is Test {
             token
         );
 
-        // Extract configuration values
-        uint256 ltv = config.getLtv();
-        uint256 liquidationThreshold = config.getLiquidationThreshold();
-        uint256 liquidationBonus = config.getLiquidationBonus();
-        uint256 reserveFactor = config.getReserveFactor();
-        bool isActive = config.getActive();
-        bool isFrozen = config.getFrozen();
-        bool borrowingEnabled = config.getBorrowingEnabled();
-        bool stableBorrowRateEnabled = config.getStableRateBorrowingEnabled();
-        bool isPaused = config.getPaused();
-        uint256 supplyCap = config.getSupplyCap();
-        uint256 borrowCap = config.getBorrowCap();
+        // // Extract configuration values
+        // uint256 ltv = config.getLtv();
+        // uint256 liquidationThreshold = config.getLiquidationThreshold();
+        // uint256 liquidationBonus = config.getLiquidationBonus();
+        // uint256 reserveFactor = config.getReserveFactor();
+        // bool isActive = config.getActive();
+        // bool isFrozen = config.getFrozen();
+        // bool borrowingEnabled = config.getBorrowingEnabled();
+        // bool stableBorrowRateEnabled = config.getStableRateBorrowingEnabled();
+        // bool isPaused = config.getPaused();
+        // uint256 supplyCap = config.getSupplyCap();
+        // uint256 borrowCap = config.getBorrowCap();
 
-        // Get current price
-        uint256 price = oracle.getAssetPrice(token);
+        // // Get current price
+        // uint256 price = oracle.getAssetPrice(token);
 
-        console.log("");
-        console.log("BASIC INFO:");
-        console.log("  aToken: %s", reserveData.aTokenAddress);
-        console.log(
-            "  Variable Debt Token: %s",
-            reserveData.variableDebtTokenAddress
-        );
-        console.log(
-            "  Stable Debt Token: %s",
-            reserveData.stableDebtTokenAddress
-        );
-        console.log("  Current Price: %s (8 decimals)", price);
+        // console.log("");
+        // console.log("BASIC INFO:");
+        // console.log("  aToken: %s", reserveData.aTokenAddress);
+        // console.log(
+        //     "  Variable Debt Token: %s",
+        //     reserveData.variableDebtTokenAddress
+        // );
+        // console.log(
+        //     "  Stable Debt Token: %s",
+        //     reserveData.stableDebtTokenAddress
+        // );
+        // console.log("  Current Price: %s (8 decimals)", price);
 
-        console.log("");
-        console.log("RISK PARAMETERS:");
-        console.log("  LTV: %s basis points (%s%%)", ltv, ltv / 100);
-        console.log(
-            "  Liquidation Threshold: %s basis points (%s%%)",
-            liquidationThreshold,
-            liquidationThreshold / 100
-        );
-        console.log(
-            "  Liquidation Bonus: %s basis points (%s%%)",
-            liquidationBonus,
-            liquidationBonus / 100
-        );
-        console.log(
-            "  Reserve Factor: %s basis points (%s%%)",
-            reserveFactor,
-            reserveFactor / 100
-        );
+        // console.log("");
+        // console.log("RISK PARAMETERS:");
+        // console.log("  LTV: %s basis points (%s%%)", ltv, ltv / 100);
+        // console.log(
+        //     "  Liquidation Threshold: %s basis points (%s%%)",
+        //     liquidationThreshold,
+        //     liquidationThreshold / 100
+        // );
+        // console.log(
+        //     "  Liquidation Bonus: %s basis points (%s%%)",
+        //     liquidationBonus,
+        //     liquidationBonus / 100
+        // );
+        // console.log(
+        //     "  Reserve Factor: %s basis points (%s%%)",
+        //     reserveFactor,
+        //     reserveFactor / 100
+        // );
 
-        console.log("");
-        console.log("CAPS:");
-        console.log("  Supply Cap: %s", supplyCap);
-        console.log("  Borrow Cap: %s", borrowCap);
+        // console.log("");
+        // console.log("CAPS:");
+        // console.log("  Supply Cap: %s", supplyCap);
+        // console.log("  Borrow Cap: %s", borrowCap);
 
-        console.log("");
-        console.log("STATUS FLAGS:");
-        console.log("  Is Active: %s", isActive);
-        console.log("  Is Frozen: %s", isFrozen);
-        console.log("  Is Paused: %s", isPaused);
-        console.log("  Borrowing Enabled: %s", borrowingEnabled);
-        console.log("  Stable Borrow Enabled: %s", stableBorrowRateEnabled);
+        // console.log("");
+        // console.log("STATUS FLAGS:");
+        // console.log("  Is Active: %s", isActive);
+        // console.log("  Is Frozen: %s", isFrozen);
+        // console.log("  Is Paused: %s", isPaused);
+        // console.log("  Borrowing Enabled: %s", borrowingEnabled);
+        // console.log("  Stable Borrow Enabled: %s", stableBorrowRateEnabled);
 
         // Get interest rate strategy
         _displayInterestRateStrategy(

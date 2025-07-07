@@ -22,8 +22,7 @@ interface IAaveRouter {
     struct PartialSellOrder {
         OrderTitle title;
         uint256 interestRateMode;
-        address[] collateralOut;
-        uint256[] percents;
+        address collateralOut;
         address repayToken;
         uint256 repayAmount;
         uint256 bonus;
@@ -32,9 +31,14 @@ interface IAaveRouter {
         bytes32 s;
     }
 
-    event CreateDebt(address indexed debt, address indexed owner);
+    event CreateDebt(
+        address indexed debt,
+        address indexed owner,
+        uint256 nonce
+    );
     event TransferDebtOwnership(address indexed debt, address indexed newOwner);
     event CancelCurrentDebtOrders(address indexed debt);
+    event CancelOrder(bytes32 indexed titleHash);
     event Supply(address indexed debt, address indexed asset, uint256 amount);
     event Borrow(
         address indexed debt,
@@ -56,14 +60,20 @@ interface IAaveRouter {
     );
 
     event ExecuteFullSaleOrder(
+        bytes32 indexed titleHash,
         address indexed debt,
         uint256 debtNonce,
-        address buyer
+        address seller,
+        address buyer,
+        uint256 baseValue
     );
 
     event ExecutePartialSellOrder(
+        bytes32 indexed titleHash,
         address indexed debt,
         uint256 debtNonce,
-        address buyer
+        address seller,
+        address buyer,
+        uint256 baseValue
     );
 }

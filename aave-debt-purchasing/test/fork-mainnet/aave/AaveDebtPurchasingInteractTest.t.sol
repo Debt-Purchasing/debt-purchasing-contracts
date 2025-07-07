@@ -4,9 +4,12 @@ pragma solidity ^0.8.20;
 import "./SetUpAave.t.sol";
 import "../../../src/AaveRouter.sol";
 import "../../../src/AaveDebt.sol";
+import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
-contract AaveDebtPurchasingInteractTest is SetUpAave {
+contract AaveDebtPurchasingInteractTest is SetUpAave, EIP712 {
     AaveRouter public router;
+
+    constructor() EIP712("AaveRouter", "1") {}
 
     function setUp() public override {
         super.setUp();
@@ -89,6 +92,14 @@ contract AaveDebtPurchasingInteractTest is SetUpAave {
             borrowAmount,
             "USDC balance increase should match borrow amount"
         );
+
+        (uint256 totalCollateralBase, uint256 totalDebtBase, , , , ) = pool
+            .getUserAccountData(predictedDebtAddress);
+        console.log("Total collateral base:", totalCollateralBase);
+        console.log("Total debt base:", totalDebtBase);
+
+        console.log("Total collateral base:", totalCollateralBase);
+        console.log("Total debt base:", totalDebtBase);
     }
 
     function _setupAlicePosition(
@@ -152,7 +163,7 @@ contract AaveDebtPurchasingInteractTest is SetUpAave {
         uint256 percentOfEquity,
         uint256 startTime,
         uint256 endTime
-    ) internal returns (IAaveRouter.FullSellOrder memory) {
+    ) internal view returns (IAaveRouter.FullSellOrder memory) {
         // Create order title
         IAaveRouter.OrderTitle memory title = IAaveRouter.OrderTitle({
             debt: predictedDebtAddress,
@@ -176,26 +187,15 @@ contract AaveDebtPurchasingInteractTest is SetUpAave {
         bytes32 structHash = keccak256(
             abi.encode(
                 router.FULL_SELL_ORDER_TYPE_HASH(),
-                block.chainid,
-                address(router),
-                keccak256(
-                    abi.encode(
-                        router.ORDER_TITLE_TYPE_HASH(),
-                        title.debt,
-                        title.debtNonce,
-                        title.startTime,
-                        title.endTime,
-                        title.triggerHF
-                    )
-                ),
+                _titleHash(title),
                 order.token,
                 order.percentOfEquity
             )
         );
 
-        // Create EIP-712 digest
+        bytes32 domainSeparator = _domainSeparator();
         bytes32 digest = keccak256(
-            abi.encodePacked("\x19\x01", router.DOMAIN_SEPARATOR(), structHash)
+            abi.encodePacked("\x19\x01", domainSeparator, structHash)
         );
 
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(alicePrivateKey, digest);
@@ -204,6 +204,37 @@ contract AaveDebtPurchasingInteractTest is SetUpAave {
         order.s = s;
 
         return order;
+    }
+
+    function _titleHash(
+        IAaveRouter.OrderTitle memory title
+    ) internal view returns (bytes32) {
+        return
+            keccak256(
+                abi.encode(
+                    router.ORDER_TITLE_TYPE_HASH(),
+                    title.debt,
+                    title.debtNonce,
+                    title.startTime,
+                    title.endTime,
+                    title.triggerHF
+                )
+            );
+    }
+
+    function _domainSeparator() internal view returns (bytes32) {
+        return
+            keccak256(
+                abi.encode(
+                    keccak256(
+                        "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+                    ),
+                    keccak256(bytes("AaveRouter")),
+                    keccak256(bytes("1")),
+                    block.chainid,
+                    address(router)
+                )
+            );
     }
 
     function _manipulatePricesToTriggerHF(
@@ -480,7 +511,7 @@ contract AaveDebtPurchasingInteractTest is SetUpAave {
         uint256 bonus,
         uint256 startTime,
         uint256 endTime
-    ) internal returns (IAaveRouter.PartialSellOrder memory) {
+    ) internal view returns (IAaveRouter.PartialSellOrder memory) {
         // Create order title
         IAaveRouter.OrderTitle memory title = IAaveRouter.OrderTitle({
             debt: predictedDebtAddress,
@@ -491,11 +522,7 @@ contract AaveDebtPurchasingInteractTest is SetUpAave {
         });
 
         // Setup collateral withdrawal - Bob gets only WETH for his payment (safer for HF)
-        address[] memory collateralOut = new address[](1);
-        collateralOut[0] = WETH;
-
-        uint256[] memory percents = new uint256[](1);
-        percents[0] = 10000; // 100% from WETH only
+        address collateralOut = WETH;
 
         // Create partial sale order
         IAaveRouter.PartialSellOrder memory order = IAaveRouter
@@ -503,7 +530,6 @@ contract AaveDebtPurchasingInteractTest is SetUpAave {
                 title: title,
                 interestRateMode: 2, // Variable rate
                 collateralOut: collateralOut,
-                percents: percents,
                 repayToken: USDC,
                 repayAmount: repayAmount,
                 bonus: bonus,
@@ -516,30 +542,18 @@ contract AaveDebtPurchasingInteractTest is SetUpAave {
         bytes32 structHash = keccak256(
             abi.encode(
                 router.PARTIAL_SELL_ORDER_TYPE_HASH(),
-                block.chainid,
-                address(router),
-                keccak256(
-                    abi.encode(
-                        router.ORDER_TITLE_TYPE_HASH(),
-                        title.debt,
-                        title.debtNonce,
-                        title.startTime,
-                        title.endTime,
-                        title.triggerHF
-                    )
-                ),
+                _titleHash(title),
                 order.interestRateMode,
                 order.collateralOut,
-                order.percents,
                 order.repayToken,
                 order.repayAmount,
                 order.bonus
             )
         );
 
-        // Create EIP-712 digest
+        bytes32 domainSeparator = _domainSeparator();
         bytes32 digest = keccak256(
-            abi.encodePacked("\x19\x01", router.DOMAIN_SEPARATOR(), structHash)
+            abi.encodePacked("\x19\x01", domainSeparator, structHash)
         );
 
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(alicePrivateKey, digest);
